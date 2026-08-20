@@ -1,0 +1,33 @@
+services:
+  vos-trajets:
+    build: .
+    image: vos-trajets-visu:latest
+    container_name: vos-trajets
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8000"
+    environment:
+      # --- Stockage -------------------------------------------------------
+      DATA_DIR: /data
+      RETENTION_HOURS: "${RETENTION_HOURS:-48}"      # purge auto des rendus
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-1024}"
+      MAX_FILES: "${MAX_FILES:-40}"
+      # --- Rendu ----------------------------------------------------------
+      MAX_CONCURRENT_JOBS: "${MAX_CONCURRENT_JOBS:-2}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      # --- Fonds de carte -------------------------------------------------
+      TILES_ENABLED: "${TILES_ENABLED:-1}"           # 0 = mode 100 % hors ligne
+      MAX_TILE_ZOOM: "${MAX_TILE_ZOOM:-17}"
+      ALLOW_PRIVATE_TILE_HOSTS: "${ALLOW_PRIVATE_TILE_HOSTS:-0}"
+      TILE_USER_AGENT: "${TILE_USER_AGENT:-vos-trajets-visu/1.0 (auto-hébergé)}"
+    volumes:
+      - trajets-data:/data
+    # Le rendu est gourmand en CPU : ajustez selon votre machine.
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT:-4}"
+          memory: "${MEM_LIMIT:-4g}"
+
+volumes:
+  trajets-data:

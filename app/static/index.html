@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vos trajets — générateur de vidéo</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo">🛰️</span>
+    <div>
+      <h1>Vos trajets — vidéo accélérée</h1>
+      <p>Déposez votre export Google Timeline, réglez, générez.</p>
+    </div>
+  </div>
+  <div class="health" id="health" title="État du service"></div>
+</header>
+
+<main>
+  <!-- ÉTAPE 1 ------------------------------------------------------------->
+  <section class="card" id="step-upload">
+    <h2><span class="step">1</span> Vos données</h2>
+    <div id="dropzone" class="dropzone">
+      <input type="file" id="file-input" multiple accept=".json,.geojson,.gpx,.zip,.gz" hidden>
+      <div class="dz-inner">
+        <div class="dz-icon">📂</div>
+        <p><strong>Glissez ici</strong> vos fichiers, ou <button class="link" id="browse">parcourez</button></p>
+        <p class="hint">Takeout <code>.zip</code>, <code>Timeline.json</code>, <code>Records.json</code>,
+           <code>Historique de localisation semantic/*.json</code>, GeoJSON, GPX.</p>
+      </div>
+    </div>
+    <div id="upload-progress" class="progress hidden"><div class="bar"></div></div>
+    <div id="upload-error" class="alert error hidden"></div>
+    <details class="help">
+      <summary>Où trouver le fichier ?</summary>
+      <ol>
+        <li>Allez sur <code>takeout.google.com</code>, décochez tout et gardez
+            « <strong>Historique des positions (Timeline)</strong> ».</li>
+        <li>Exportez, téléchargez l'archive <code>.zip</code> et déposez-la ici telle quelle.</li>
+        <li>Variante mobile : Google Maps → Vos trajets → ⋮ → « Exporter les données de la Timeline ».</li>
+      </ol>
+      <p class="hint">Tout reste sur ce serveur ; les fichiers sources sont effacés après analyse
+         et les rendus purgés automatiquement.</p>
+    </details>
+  </section>
+
+  <!-- ÉTAPE 2 ------------------------------------------------------------->
+  <section class="card hidden" id="step-config">
+    <h2><span class="step">2</span> Réglages</h2>
+    <div id="stats" class="stats"></div>
+    <div id="parse-warnings" class="alert warn hidden"></div>
+
+    <h3 class="sub">Présélections</h3>
+    <div id="presets" class="presets"></div>
+
+    <div id="form"></div>
+
+    <div class="actions">
+      <button id="btn-estimate" class="ghost">Recalculer la sélection</button>
+      <button id="btn-geojson" class="ghost">Export GeoJSON</button>
+      <button id="btn-gpx" class="ghost">Export GPX</button>
+      <button id="btn-quick" class="secondary">Aperçu rapide (480p)</button>
+      <button id="btn-render" class="primary">Générer la vidéo</button>
+    </div>
+  </section>
+
+  <!-- ÉTAPE 3 ------------------------------------------------------------->
+  <section class="card hidden" id="step-render">
+    <h2><span class="step">3</span> Rendu</h2>
+    <div id="jobs"></div>
+  </section>
+</main>
+
+<footer>
+  <p>Auto-hébergé · fonds de carte © OpenStreetMap / CARTO selon le fournisseur choisi ·
+     vos données ne quittent pas ce serveur.</p>
+</footer>
+<script src="/app.js"></script>
+</body>
+</html>

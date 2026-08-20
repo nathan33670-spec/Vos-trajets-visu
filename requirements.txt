@@ -1,0 +1,9 @@
+# Testé avec les versions les plus récentes de chaque paquet ; les bornes basses
+# correspondent aux API utilisées (pydantic v2, Image.reduce/alpha_composite…).
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+python-multipart>=0.0.20
+pydantic>=2.10,<3.0
+pillow>=11.0,<13.0
+# Repli si ffmpeg n'est pas installé sur le système (l'image Docker fournit ffmpeg).
+imageio-ffmpeg>=0.5,<1.0

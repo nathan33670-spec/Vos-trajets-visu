@@ -1,0 +1,9 @@
+.git
+data
+*.mp4
+*.webm
+*.gif
+__pycache__
+*.pyc
+.venv
+scratch
