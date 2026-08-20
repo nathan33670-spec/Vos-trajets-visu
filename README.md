@@ -19,13 +19,13 @@ cp .env.example .env          # facultatif : ports, quotas, mode hors ligne
 docker compose up -d --build
 ```
 
-Portail : <http://localhost:8080>
+Portail : <http://localhost:5080>
 
 Sans docker compose :
 
 ```bash
 docker build -t vos-trajets-visu .
-docker run -d -p 8080:8000 -v vos-trajets-data:/data --name vos-trajets vos-trajets-visu
+docker run -d -p 5080:8000 -v vos-trajets-data:/data --name vos-trajets vos-trajets-visu
 ```
 
 En développement, hors conteneur :
@@ -160,7 +160,7 @@ qu'une seule fois pour toute la vidéo).
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `PORT` | `8080` | Port publié sur l'hôte (docker compose) |
+| `PORT` | `5080` | Port publié sur l'hôte (docker compose) |
 | `DATA_DIR` | `/data` | Téléversements, rendus et cache de tuiles |
 | `RETENTION_HOURS` | `48` | Purge automatique (`0` = jamais) |
 | `MAX_UPLOAD_MB` | `1024` | Taille cumulée maximale d'un dépôt |
@@ -209,12 +209,12 @@ qu'une seule fois pour toute la vidéo).
 Exemple :
 
 ```bash
-UP=$(curl -s -F "fichiers=@takeout.zip" http://localhost:8080/api/uploads | jq -r .id)
+UP=$(curl -s -F "fichiers=@takeout.zip" http://localhost:5080/api/uploads | jq -r .id)
 JOB=$(curl -s -X POST -H 'Content-Type: application/json' \
       -d "{\"upload_id\":\"$UP\",\"options\":{\"duration\":45,\"camera\":\"auto\"}}" \
-      http://localhost:8080/api/jobs | jq -r .id)
-curl -s http://localhost:8080/api/jobs/$JOB | jq '.status, .progress'
-curl -o trajets.mp4 http://localhost:8080/api/jobs/$JOB/fichier/video
+      http://localhost:5080/api/jobs | jq -r .id)
+curl -s http://localhost:5080/api/jobs/$JOB | jq '.status, .progress'
+curl -o trajets.mp4 http://localhost:5080/api/jobs/$JOB/fichier/video
 ```
 
 La documentation interactive est disponible sur `/docs`.
