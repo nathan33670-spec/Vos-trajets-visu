@@ -22,12 +22,14 @@ services:
       TILE_USER_AGENT: "${TILE_USER_AGENT:-vos-trajets-visu/1.0 (auto-hébergé)}"
     volumes:
       - trajets-data:/data
-    # Le rendu est gourmand en CPU : ajustez selon votre machine.
-    deploy:
-      resources:
-        limits:
-          cpus: "${CPU_LIMIT:-4}"
-          memory: "${MEM_LIMIT:-4g}"
+    # Le rendu est gourmand en CPU. Pour le brider, décommentez ce bloc — mais
+    # beaucoup de noyaux de NAS n'exposent pas les quotas cgroup et Docker
+    # refuse alors de démarrer (« NanoCPUs can not be set… »).
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "4"
+    #       memory: "4g"
 
 volumes:
   trajets-data:
