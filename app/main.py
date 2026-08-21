@@ -11,6 +11,7 @@ from typing import List, Optional
 from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from .models import (MODE_COLORS, MODE_LABELS, PRESETS, TILE_PROVIDERS, RenderOptions)
@@ -134,12 +135,18 @@ async def upload(fichiers: List[UploadFile] = File(..., alias="fichiers")):
         if not paths:
             raise HTTPException(400, "Aucun fichier reçu.")
 
+        # L'analyse est bloquante (lecture disque + JSON) : elle part dans un
+        # thread, sinon tout le serveur se fige pendant plusieurs secondes et
+        # le navigateur croit à un échec d'envoi.
         t0 = time.time()
-        collector = parse_files(paths)
+        collector = await run_in_threadpool(parse_files, paths)
         if not collector.trips:
-            raise HTTPException(422, " ".join(collector.warnings[-2:]) or
-                                "Aucun trajet trouvé dans les fichiers fournis.")
-        save_trips(os.path.join(dest, "trajets.json.gz"), collector.trips, collector.places)
+            detail = " ".join(collector.warnings[-2:]).strip()
+            raise HTTPException(422, detail or (
+                "Aucun trajet trouvé. Vérifiez que le fichier vient bien de Google Takeout, "
+                "rubrique « Historique des positions (Timeline) »."))
+        await run_in_threadpool(save_trips, os.path.join(dest, "trajets.json.gz"),
+                                collector.trips, collector.places)
         stats = summarize(collector.trips, collector.places)
         meta = {
             "id": upload_id,

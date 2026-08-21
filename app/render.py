@@ -16,8 +16,9 @@ from .geo import (meters_per_pixel, scale_for_bounds, world_to_lonlat,
                   zoom_to_scale, lonlat_to_world)
 from .models import (MODE_COLORS, MODE_LABELS, QUALITY_CRF, QUALITY_PRESET, Place,
                      RenderOptions, Trip)
-from .processing import Timeline, build_timeline
-from .tiles import TileCache, TileError, render_tile_background, resolve_provider
+from .processing import Timeline, build_timeline, wide_bounds
+from .tiles import (TileCache, TileError, choose_zoom,
+                    render_tile_background, resolve_provider)
 
 log = logging.getLogger(__name__)
 
@@ -130,12 +131,17 @@ def _ema(values: List[float], alpha: float) -> List[float]:
 def plan_camera(tl: Timeline, opt: RenderOptions, frames: int,
                 progress_of_frame: List[float]) -> List[Camera]:
     W, H = opt.width, opt.height
+    # Plan large : la zone réellement fréquentée. Une destination isolée ne
+    # doit pas centrer la vidéo sur un océan vide.
+    wide = wide_bounds(tl)
+    wide_scale = scale_for_bounds(wide, W, H, opt.padding)
+    gcx = (wide[0] + wide[2]) / 2.0
+    gcy = (wide[1] + wide[3]) / 2.0
+    # Dézoom maximal autorisé pendant la vidéo : tout doit pouvoir tenir.
     global_scale = scale_for_bounds(tl.bounds, W, H, opt.padding)
-    gcx = (tl.bounds[0] + tl.bounds[2]) / 2.0
-    gcy = (tl.bounds[1] + tl.bounds[3]) / 2.0
 
     if opt.camera == "fit_all":
-        return [Camera(gcx, gcy, global_scale)] * frames
+        return [Camera(gcx, gcy, wide_scale)] * frames
 
     cxs: List[float] = []
     cys: List[float] = []
@@ -196,7 +202,7 @@ def plan_camera(tl: Timeline, opt: RenderOptions, frames: int,
             cams[i] = Camera(cams[i].cx + (gcx - cams[i].cx) * f,
                              cams[i].cy + (gcy - cams[i].cy) * f,
                              math.exp(math.log(cams[i].scale) +
-                                      (math.log(global_scale) - math.log(cams[i].scale)) * f))
+                                      (math.log(wide_scale) - math.log(cams[i].scale)) * f))
     return cams
 
 
@@ -269,14 +275,22 @@ class Renderer:
         self.W, self.H = opt.width, opt.height
         self.ss = opt.supersample
         self.warnings: List[str] = []
-        self.font_big = get_font(int(self.H * 0.055 * opt.font_scale))
-        self.font_mid = get_font(int(self.H * 0.030 * opt.font_scale))
-        self.font_small = get_font(int(self.H * 0.021 * opt.font_scale))
+        # Tout l'habillage se dimensionne sur la plus petite dimension : sinon
+        # un format portrait (1080x1920) affiche un texte deux fois trop gros.
+        self.ref = min(self.W, self.H)
+        self.k = max(self.ref / 1080.0, 0.35)      # échelle des traits
+        self.margin = int(self.ref * 0.05)
+        self.lw = opt.line_width * self.k
+        self.head_r = opt.head_size * self.k
+        self.font_big = get_font(int(self.ref * 0.058 * opt.font_scale))
+        self.font_mid = get_font(int(self.ref * 0.032 * opt.font_scale))
+        self.font_small = get_font(int(self.ref * 0.022 * opt.font_scale))
         self.overlay_rgb = hex_to_rgb(opt.overlay_color, (242, 246, 255))
         self.bg_rgb = hex_to_rgb(opt.background, (11, 15, 26))
         self.tile_url = None
         self.tile_attr = ""
         self._tile_warned = False
+        self._scrim_cache: Optional[Image.Image] = None
 
     # ---------------------------------------------------------- couleurs
 
@@ -299,6 +313,41 @@ class Renderer:
 
     # ---------------------------------------------------------- fonds
 
+    def _prefetch_tiles(self, cams: List[Camera], budget: int = 1200) -> None:
+        """Télécharge à l'avance les tuiles de tout le parcours de caméra.
+
+        Sans cela, un dézoom final réclame d'un coup des dizaines de tuiles
+        inédites : le serveur limite le débit et l'image se troue.
+        """
+        if not (self.opt.map_style == "tiles" and self.tile_url and self.tile_cache):
+            return
+        seen = set()
+        coords = []
+        step = max(1, len(cams) // 240)
+        for cam in cams[::step]:
+            z = choose_zoom(cam.scale)
+            n = 1 << z
+            left = cam.cx - (self.W / 2) / cam.scale
+            top = cam.cy - (self.H / 2) / cam.scale
+            x0, y0 = math.floor(left * n), math.floor(top * n)
+            x1 = math.floor((left + self.W / cam.scale) * n)
+            y1 = math.floor((top + self.H / cam.scale) * n)
+            if (x1 - x0 + 1) * (y1 - y0 + 1) > 400:
+                continue
+            for x in range(x0, x1 + 1):
+                for y in range(y0, y1 + 1):
+                    if not (0 <= y < n):
+                        continue
+                    key = (z, x % n, y)
+                    if key not in seen:
+                        seen.add(key)
+                        coords.append(key)
+            if len(coords) >= budget:
+                break
+        if coords:
+            log.info("Préchargement de %d tuiles", len(coords))
+            self.tile_cache.prefetch(self.tile_url, self.opt.tile_provider, coords)
+
     def _background(self, cam: Camera, cache: Dict) -> Image.Image:
         """Fond de carte pour une vue donnée (mémoïsé : gratuit en caméra fixe)."""
         opt = self.opt
@@ -314,10 +363,15 @@ class Renderer:
                     cam.cx, cam.cy, cam.scale, self.W, self.H,
                     grayscale=opt.tile_grayscale, opacity=opt.tile_opacity,
                     base_color=self.bg_rgb)
-            except Exception as exc:  # réseau indisponible → fond uni
+            except Exception as exc:  # réseau indisponible → repli hors ligne
                 if not self._tile_warned:
-                    self.warnings.append(f"Fond de carte indisponible : {exc}")
+                    self.warnings.append(
+                        f"Fond de carte en ligne indisponible ({exc}) : repli sur "
+                        "la trace en filigrane.")
                     self._tile_warned = True
+                self.tile_attr = ""      # pas de tuiles affichées, pas d'attribution
+                base = Image.alpha_composite(base.convert("RGBA"),
+                                             self._ghost_layer(cam)).convert("RGB")
         elif opt.map_style == "grid":
             d = ImageDraw.Draw(base)
             step = max(40, int(self.H / 12))
@@ -339,7 +393,7 @@ class Renderer:
         col = hex_to_rgb(self.opt.overlay_color, (200, 210, 230))
         color = (col[0], col[1], col[2], alpha)
         segs: List[Segment] = []
-        lw = max(0.8, self.opt.line_width * 0.5)
+        lw = max(0.8, self.lw * 0.5)
         for i in range(len(tl)):
             if tl.gap[i]:
                 continue
@@ -358,6 +412,25 @@ class Renderer:
         return out
 
     # ---------------------------------------------------------- habillage
+
+    def _scrim(self) -> Image.Image:
+        """Léger dégradé sombre en haut et en bas : le texte reste lisible
+        quel que soit le fond de carte, sans assombrir le centre de l'image."""
+        if self._scrim_cache is None:
+            layer = Image.new("RGBA", (1, self.H), (0, 0, 0, 0))
+            px = layer.load()
+            top = int(self.H * 0.26)
+            bottom = int(self.H * 0.30)
+            base = hex_to_rgb(self.opt.background, (8, 11, 18))
+            for y in range(self.H):
+                a = 0.0
+                if y < top:
+                    a = (1.0 - y / top) ** 1.7 * 0.62
+                elif y > self.H - bottom:
+                    a = ((y - (self.H - bottom)) / bottom) ** 1.7 * 0.68
+                px[0, y] = (base[0], base[1], base[2], int(255 * a))
+            self._scrim_cache = layer.resize((self.W, self.H))
+        return self._scrim_cache
 
     @staticmethod
     def _aa_circle(layer: Image.Image, cx: float, cy: float, r: float,
@@ -415,7 +488,7 @@ class Renderer:
                        trip_no: int, alpha: int = 255) -> None:
         opt = self.opt
         d = ImageDraw.Draw(layer)
-        m = int(self.H * 0.045)
+        m = self.margin
 
         if opt.show_clock and opt.clock_format != "none":
             self._text(d, (m, m), self._format_clock(cur_time), self.font_big, alpha=alpha)
@@ -427,7 +500,7 @@ class Renderer:
                        f"{trip_no} trajet{'s' if trip_no > 1 else ''}",
                        self.font_small, alpha=alpha)
 
-        bar_h = max(3, int(self.H * 0.006))
+        bar_h = max(3, int(self.ref * 0.006))
         bottom = self.H - m - (bar_h * 3 if opt.show_progress else 0)
 
         if opt.show_legend:
@@ -491,7 +564,7 @@ class Renderer:
         px = nice / mpp if mpp > 0 else 0
         if px < 20 or px > self.W * 0.5:
             return
-        m = int(self.H * 0.045)
+        m = self.margin
         x = self.W - m - px
         y = (bottom if bottom is not None else self.H - m) - self.font_small.size * 0.8
         d.line((x, y, x + px, y), fill=(*self.overlay_rgb, alpha), width=2)
@@ -557,6 +630,7 @@ class Renderer:
 
         self.on_progress(0.04, "Calcul des mouvements de caméra…")
         cams = plan_camera(tl, opt, frames, progress_of_frame)
+        self._prefetch_tiles(cams)
 
         dist_prefix = [0.0]
         for i in range(len(tl)):
@@ -575,8 +649,10 @@ class Renderer:
         last_idx = 0
         bg_cache: Dict = {}
         poster_img = None
-        blur_radius = max(1.5, self.H * 0.006 * opt.glow_strength)
+        blur_radius = max(1.5, self.ref * 0.007 * opt.glow_strength)
         glow_div = 3 if max(self.W, self.H) >= 1400 else 2
+        needs_scrim = any((opt.show_clock and opt.clock_format != "none", opt.show_stats,
+                           opt.show_legend, opt.title, opt.watermark, opt.show_scalebar))
         report_every = max(1, frames // 100)
 
         try:
@@ -599,7 +675,7 @@ class Renderer:
                     new_segs = self._segments_between(tl, cam, last_idx, idx, frac,
                                                       int(255 * opt.trail_opacity))
                     if new_segs:
-                        bbox = visible_bbox(new_segs, int(opt.line_width * 3 + 8), self.W, self.H)
+                        bbox = visible_bbox(new_segs, int(self.lw * 3 + 8), self.W, self.H)
                         res = draw_segments(new_segs, self.W, self.H, self.ss, bbox)
                         if res:
                             layer, off = res
@@ -636,7 +712,7 @@ class Renderer:
                 # écran en supersampling coûterait une allocation par image).
                 active_res = None
                 if active:
-                    pad = int(opt.line_width * 3 + (blur_radius * 2 if opt.glow else 0) + 8)
+                    pad = int(self.lw * 3 + (blur_radius * 2 if opt.glow else 0) + 8)
                     active_res = draw_segments(active, self.W, self.H, self.ss,
                                                visible_bbox(active, pad, self.W, self.H))
 
@@ -658,15 +734,18 @@ class Renderer:
                 if active_res is not None:
                     frame.alpha_composite(active_res[0], dest=active_res[1])
 
+                if needs_scrim:
+                    frame.alpha_composite(self._scrim())
+
                 # Tout l'habillage est peint sur un calque transparent : Pillow
                 # n'applique pas l'alpha quand on dessine sur une image RGBA.
                 ov = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
                 if opt.show_places and self.places:
                     self._draw_places(ov, cam, cur_time)
 
-                if opt.head_dot and opt.head_size > 0:
+                if opt.head_dot and self.head_r > 0:
                     sx, sy = cam.to_screen(hx, hy, self.W, self.H)
-                    r = opt.head_size * (1.0 + (0.25 * math.sin(i * 0.35) if opt.head_pulse else 0))
+                    r = self.head_r * (1.0 + (0.25 * math.sin(i * 0.35) if opt.head_pulse else 0))
                     self._aa_circle(ov, sx, sy, r * 2.2, (*head_rgb, 45))
                     self._aa_circle(ov, sx, sy, r, (255, 255, 255, 235))
                     self._aa_circle(ov, sx, sy, r * 0.5, (*head_rgb, 255))
@@ -751,7 +830,6 @@ class Renderer:
                           alpha: int, comet: bool = False, lo: float = 0.0,
                           span: float = 1.0) -> List[Segment]:
         """Construit les segments écran entre deux index de la chronologie."""
-        opt = self.opt
         W, H = self.W, self.H
         segs: List[Segment] = []
         margin = 60
@@ -783,12 +861,12 @@ class Renderer:
             if not (max(ax, bx) < -margin or min(ax, bx) > W + margin
                     or max(ay, by) < -margin or min(ay, by) > H + margin):
                 a = alpha
-                lw = opt.line_width
+                lw = self.lw
                 if comet and span > 0:
                     rel = (tl.cum[i] - lo) / span
                     rel = max(0.0, min(1.0, rel))
                     a = int(alpha * (0.15 + 0.85 * rel ** 1.6))
-                    lw = opt.line_width * (0.55 + 0.45 * rel)
+                    lw = self.lw * (0.55 + 0.45 * rel)
                 r, g, b = self.colors[i]
                 segs.append((ax, ay, bx, by, (r, g, b, a), lw))
             i += 1
@@ -796,7 +874,7 @@ class Renderer:
 
     def _draw_places(self, layer: Image.Image, cam: Camera, cur_time: float) -> None:
         d = ImageDraw.Draw(layer)
-        r = max(2.0, self.opt.line_width * 0.9)
+        r = max(2.0, self.lw * 0.9)
         col = hex_to_rgb(self.opt.overlay_color)
         for p in self.places:
             if p.start > cur_time:

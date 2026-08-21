@@ -39,7 +39,7 @@ const SECTIONS = [
   },
   {
     id: 'video', title: '🎬 Format vidéo', open: true, fields: [
-      { k: '_res', t: 'select', label: 'Résolution', local: true, options: [
+      { k: '_res', t: 'select', label: 'Format de la vidéo', local: true, simple: true, options: [
         ['1920x1080', '1080p paysage'], ['1280x720', '720p paysage'],
         ['2560x1440', '1440p paysage'], ['3840x2160', '4K paysage'],
         ['1080x1920', '1080x1920 vertical'], ['1080x1080', 'Carré 1080'],
@@ -47,7 +47,7 @@ const SECTIONS = [
       { k: 'width', t: 'num', label: 'Largeur (px)', min: 160, max: 3840, step: 2 },
       { k: 'height', t: 'num', label: 'Hauteur (px)', min: 160, max: 2160, step: 2 },
       { k: 'fps', t: 'range', label: 'Images / s', min: 5, max: 60, step: 1 },
-      { k: 'duration', t: 'range', label: 'Durée (s)', min: 5, max: 600, step: 1 },
+      { k: 'duration', t: 'range', label: 'Durée de la vidéo (s)', min: 5, max: 300, step: 1, simple: true },
       { k: 'container', t: 'select', label: 'Format', options: [
         ['mp4', 'MP4 (H.264)'], ['webm', 'WebM (VP9)'], ['gif', 'GIF animé']] },
       { k: 'quality', t: 'select', label: 'Qualité', options: [
@@ -69,9 +69,11 @@ const SECTIONS = [
   },
   {
     id: 'camera', title: '🎥 Caméra', fields: [
-      { k: 'camera', t: 'select', label: 'Mouvement', options: [
-        ['fit_all', 'Plan fixe sur tout'], ['auto', 'Cinématique (suit la trace)'],
-        ['follow', 'Centrée sur le point actuel'], ['trip', 'Cadre chaque trajet']] },
+      { k: 'camera', t: 'select', label: 'Mouvement de caméra', simple: true, options: [
+        ['auto', 'Suit les trajets, dézoom final (conseillé)'],
+        ['fit_all', 'Plan fixe sur toute la zone'],
+        ['follow', 'Collée au point qui se déplace'],
+        ['trip', 'Cadre chaque trajet']] },
       { k: 'follow_zoom', t: 'range', label: 'Zoom max.', min: 1, max: 19, step: 0.5 },
       { k: 'camera_smoothing', t: 'range', label: 'Lissage', min: 0, max: 0.99, step: 0.01 },
       { k: 'padding', t: 'range', label: 'Marge du cadrage', min: 0, max: 0.4, step: 0.01 },
@@ -80,9 +82,9 @@ const SECTIONS = [
   },
   {
     id: 'carte', title: '🗺️ Fond de carte', fields: [
-      { k: 'map_style', t: 'select', label: 'Type de fond', options: [
-        ['ghost', 'Trace fantôme (hors ligne)'], ['none', 'Uni'], ['grid', 'Grille'],
-        ['tiles', 'Tuiles de carte (Internet)']] },
+      { k: 'map_style', t: 'select', label: 'Fond de carte', simple: true, options: [
+        ['tiles', 'Carte (recommandé)'], ['ghost', 'Trace seule (hors ligne)'],
+        ['none', 'Fond uni'], ['grid', 'Grille']] },
       { k: 'tile_provider', t: 'select', label: 'Fournisseur de tuiles', options: [] },
       { k: 'tile_url', t: 'text', label: 'URL personnalisée', wide: true,
         placeholder: 'https://serveur/{z}/{x}/{y}.png' },
@@ -94,7 +96,7 @@ const SECTIONS = [
   },
   {
     id: 'trace', title: '✨ Style du tracé', open: true, fields: [
-      { k: 'color_mode', t: 'select', label: 'Couleur selon', options: [
+      { k: 'color_mode', t: 'select', label: 'Couleur des trajets', simple: true, options: [
         ['mode', 'Le mode de transport'], ['speed', 'La vitesse'],
         ['time', 'La date'], ['single', 'Couleur unique']] },
       { k: 'line_color', t: 'color', label: 'Couleur unique / accent' },
@@ -117,7 +119,8 @@ const SECTIONS = [
   },
   {
     id: 'habillage', title: '🏷️ Habillage', fields: [
-      { k: 'title', t: 'text', label: 'Titre d\'introduction', wide: true },
+      { k: 'title', t: 'text', label: 'Titre affiché au début', simple: true,
+        placeholder: 'Mes trajets 2024' },
       { k: 'subtitle', t: 'text', label: 'Sous-titre', wide: true },
       { k: 'title_seconds', t: 'num', label: 'Durée du carton titre (s)', min: 0, step: 0.5 },
       { k: 'outro_text', t: 'text', label: 'Texte de fin', wide: true },
@@ -149,16 +152,23 @@ const SECTIONS = [
 
 /* -------------------------------------------------------------- rendu form */
 function buildForm(defaults) {
-  const root = $('#form');
-  root.innerHTML = '';
+  const simple = $('#form-simple');
+  const advanced = $('#form-advanced');
+  simple.innerHTML = '';
+  advanced.innerHTML = '';
+
+  const simpleGrid = el('div', { class: 'grid' });
   for (const sec of SECTIONS) {
+    const rest = sec.fields.filter(f => !f.simple);
+    for (const f of sec.fields.filter(f => f.simple)) simpleGrid.appendChild(buildField(f, defaults));
+    if (!rest.length) continue;
     const grid = el('div', { class: 'grid' });
-    for (const f of sec.fields) grid.appendChild(buildField(f, defaults));
-    root.appendChild(el('details', { class: 'section', open: sec.open || false },
+    for (const f of rest) grid.appendChild(buildField(f, defaults));
+    advanced.appendChild(el('details', { class: 'section' },
       el('summary', {}, sec.title), grid));
   }
+  simple.appendChild(simpleGrid);
 
-  // Liste des fournisseurs de tuiles renseignée dynamiquement.
   const sel = $('[name=tile_provider]');
   if (sel) {
     sel.innerHTML = '';
@@ -167,8 +177,10 @@ function buildForm(defaults) {
     sel.value = defaults.tile_provider;
   }
   syncResolution();
-  root.addEventListener('input', onFormInput);
-  root.addEventListener('change', onFormInput);
+  for (const root of [simple, advanced]) {
+    root.addEventListener('input', onFormInput);
+    root.addEventListener('change', onFormInput);
+  }
 }
 
 function buildField(f, defaults) {
@@ -322,40 +334,83 @@ async function api(url, opts = {}) {
   return data;
 }
 
-async function uploadFiles(files) {
-  const err = $('#upload-error'); err.classList.add('hidden');
-  const prog = $('#upload-progress'); prog.classList.remove('hidden');
-  const bar = $('.bar', prog); bar.style.width = '5%';
+function humanSize(bytes) {
+  return bytes > 1048576 ? (bytes / 1048576).toFixed(0) + ' Mo'
+    : (bytes / 1024).toFixed(0) + ' Ko';
+}
+
+async function uploadFiles(files, attempt = 0) {
+  const err = $('#upload-error');
+  const status = $('#upload-status');
+  err.classList.add('hidden');
+
+  const total = [...files].reduce((n, f) => n + f.size, 0);
+  const limit = (state.config?.limits?.max_upload_mb || 1024) * 1048576;
+  if (total > limit) {
+    err.innerHTML = `Fichier trop volumineux : ${humanSize(total)} pour une limite de ` +
+      `${humanSize(limit)}.<br>Augmentez <code>MAX_UPLOAD_MB</code> dans le fichier ` +
+      `<code>.env</code> du serveur, ou n'envoyez que le dossier ` +
+      `« Historique des positions (Timeline) » de l'archive.`;
+    err.classList.remove('hidden');
+    return;
+  }
+
+  const prog = $('#upload-progress');
+  prog.classList.remove('hidden');
+  const bar = $('.bar', prog);
+  bar.style.width = '3%';
+  status.classList.remove('hidden');
+  status.textContent = `Envoi de ${humanSize(total)}…`;
+
   const fd = new FormData();
   [...files].forEach(f => fd.append('fichiers', f));
   try {
     const xhr = new XMLHttpRequest();
+    state.xhr = xhr;
     const meta = await new Promise((resolve, reject) => {
       xhr.open('POST', '/api/uploads');
+      xhr.timeout = 0;                       // un gros fichier peut être long
       xhr.upload.onprogress = e => {
-        if (e.lengthComputable) bar.style.width = (5 + 70 * e.loaded / e.total) + '%';
+        if (!e.lengthComputable) return;
+        const pct = e.loaded / e.total;
+        bar.style.width = (3 + 62 * pct) + '%';
+        status.textContent = pct >= 1 ? 'Analyse du fichier sur le serveur…'
+          : `Envoi : ${humanSize(e.loaded)} / ${humanSize(e.total)}`;
       };
+      xhr.upload.onload = () => { status.textContent = 'Analyse du fichier sur le serveur…'; };
       xhr.onload = () => {
         bar.style.width = '100%';
         let d = null;
         try { d = JSON.parse(xhr.responseText); } catch { d = null; }
         if (xhr.status >= 200 && xhr.status < 300) resolve(d);
-        else reject(new Error(d?.detail || `Erreur ${xhr.status}`));
+        else reject(Object.assign(new Error(d?.detail || `Erreur ${xhr.status}`),
+          { status: xhr.status }));
       };
-      xhr.onerror = () => reject(new Error('Connexion interrompue.'));
+      xhr.onerror = () => reject(Object.assign(new Error('connexion interrompue'), { status: 0 }));
+      xhr.onabort = () => reject(Object.assign(new Error('envoi annulé'), { status: -1 }));
       xhr.send(fd);
     });
     state.uploadId = meta.id;
     state.meta = meta;
+    status.textContent = `${meta.stats.trips} trajets reconnus en ${meta.parse_seconds} s.`;
     showStats(meta.stats, meta);
     $('#step-config').classList.remove('hidden');
     prefillDates(meta.stats);
     $('#step-config').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
-    err.textContent = e.message;
+    // Coupure réseau : une seconde tentative avant d'embêter l'utilisateur.
+    if (e.status === 0 && attempt < 1) {
+      status.textContent = 'Connexion interrompue, nouvelle tentative…';
+      return uploadFiles(files, attempt + 1);
+    }
+    status.classList.add('hidden');
+    err.innerHTML = escapeHtml(e.message) + (e.status === 0
+      ? '<br>Si le NAS est derrière un reverse proxy, vérifiez sa limite de taille ' +
+        "d'envoi (<code>client_max_body_size</code> sous nginx)." : '');
     err.classList.remove('hidden');
   } finally {
-    setTimeout(() => prog.classList.add('hidden'), 600);
+    state.xhr = null;
+    setTimeout(() => prog.classList.add('hidden'), 800);
   }
 }
 
@@ -391,7 +446,8 @@ function showStats(stats, meta) {
     el('div', { class: 'stat' }, el('div', { class: 'v' + (small ? ' small' : '') }, String(v)),
       el('div', { class: 'k' }, k))));
 
-  const chips = el('div', { class: 'mode-chips' });
+  const chips = $('#mode-chips');
+  chips.innerHTML = '';
   const colors = Object.fromEntries(state.config.modes.map(m => [m.id, m]));
   for (const [mode, d] of Object.entries(stats.per_mode || {})) {
     const info = colors[mode] || { label: mode, color: '#888' };
@@ -399,9 +455,6 @@ function showStats(stats, meta) {
       el('i', { style: `background:${info.color}` }),
       `${info.label} · ${d.count} · ${d.distance_km.toLocaleString('fr-FR')} km`));
   }
-  box.after(chips);
-  const old = document.querySelectorAll('.mode-chips');
-  if (old.length > 1) old[0].remove();
 
   const warn = $('#parse-warnings');
   const notes = (meta?.warnings || []).filter(Boolean);
@@ -417,7 +470,7 @@ const escapeHtml = s => String(s).replace(/[&<>"]/g, c =>
 
 function flash(msg, kind = 'info') {
   const box = el('div', { class: `alert ${kind}` }, msg);
-  $('#step-config').insertBefore(box, $('#form'));
+  $('#step-config').insertBefore(box, $('#form-simple'));
   setTimeout(() => box.remove(), 6000);
 }
 
@@ -534,8 +587,15 @@ async function init() {
   dz.addEventListener('drop', e => e.dataTransfer.files.length && uploadFiles(e.dataTransfer.files));
 
   $('#btn-render').addEventListener('click', () => startRender());
-  $('#btn-quick').addEventListener('click', () => startRender(
-    { width: 854, height: 480, fps: 15, duration: Math.min(20, readOptions().duration), supersample: 1, quality: 'medium' }));
+  $('#btn-quick').addEventListener('click', () => {
+    const o = readOptions();
+    const vertical = o.height > o.width;
+    startRender({
+      width: vertical ? 480 : 854, height: vertical ? 854 : 480,
+      fps: 15, duration: Math.min(15, o.duration), supersample: 1,
+      quality: 'medium', glow: false,
+    });
+  });
   $('#btn-estimate').addEventListener('click', async () => {
     try {
       const r = await api(`/api/uploads/${state.uploadId}/apercu`, {
@@ -557,6 +617,18 @@ async function init() {
   };
   $('#btn-geojson').addEventListener('click', () => exportAs('geojson'));
   $('#btn-gpx').addEventListener('click', () => exportAs('gpx'));
+
+  const advBtn = $('#toggle-advanced');
+  advBtn.addEventListener('click', () => {
+    const open = $('#form-advanced').classList.toggle('hidden');
+    advBtn.setAttribute('aria-expanded', String(!open));
+  });
+
+  document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+    $('#guide-ordi').classList.toggle('hidden', tab.dataset.tab !== 'ordi');
+    $('#guide-tel').classList.toggle('hidden', tab.dataset.tab !== 'tel');
+  }));
 
   try {
     const h = await api('/api/sante');

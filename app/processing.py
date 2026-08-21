@@ -306,6 +306,49 @@ def build_timeline(trips: List[Trip], opt: RenderOptions,
     return tl
 
 
+def dense_bounds(tl: Timeline) -> Tuple[float, float, float, float]:
+    """Emprise des trajets habituels, les destinations exceptionnelles exclues.
+
+    On raisonne par trajet (pas par coordonnée) pour garder un cadre cohérent.
+    Est exceptionnel un trajet **beaucoup** plus lointain que le précédent
+    (au moins quatre fois), et seuls les tout derniers trajets du classement
+    peuvent l'être : partir dix fois aux États-Unis, ce n'est plus une
+    exception, et la vue doit alors les inclure.
+    """
+    boxes = tl.trip_bounds
+    n = len(boxes)
+    if n < 8:
+        return tl.bounds
+    centres = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in boxes]
+    mx = sorted(c[0] for c in centres)[n // 2]
+    my = sorted(c[1] for c in centres)[n // 2]
+    dists = sorted((max(abs(x - mx), abs(y - my)), i) for i, (x, y) in enumerate(centres))
+    values = [d for d, _ in dists]
+
+    budget = max(2, int(n * 0.03))
+    cut_at = None
+    for i in range(n - 1, max(n - 1 - budget, 0), -1):
+        if values[i - 1] > 0 and values[i] > values[i - 1] * 4.0:
+            cut_at = i
+    if cut_at is None:
+        return tl.bounds
+    kept = [boxes[i] for _, i in dists[:cut_at]]
+    if not kept:
+        return tl.bounds
+    return (min(b[0] for b in kept), min(b[1] for b in kept),
+            max(b[2] for b in kept), max(b[3] for b in kept))
+
+
+def wide_bounds(tl: Timeline, max_ratio: float = 3.5) -> Tuple[float, float, float, float]:
+    """Cadrage du plan large final : tout, sauf si une destination isolée
+    réduisait le reste à un point — auquel cas on garde la zone fréquentée."""
+    full = tl.bounds
+    dense = dense_bounds(tl)
+    span_full = max(full[2] - full[0], full[3] - full[1], 1e-9)
+    span_dense = max(dense[2] - dense[0], dense[3] - dense[1], 1e-9)
+    return full if span_full / span_dense <= max_ratio else dense
+
+
 def _world_distance_m(a, b) -> float:
     from .geo import world_to_lonlat
     lon1, lat1 = world_to_lonlat(a[0], a[1])

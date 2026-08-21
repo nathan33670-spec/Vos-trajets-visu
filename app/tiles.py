@@ -7,6 +7,7 @@ import math
 import os
 import socket
 import threading
+import time
 import urllib.parse
 import urllib.request
 from collections import OrderedDict
@@ -74,6 +75,8 @@ class TileCache:
         self.pool = ThreadPoolExecutor(max_workers=workers)
         self.failures = 0
         self.downloads = 0
+        self.consecutive_failures = 0
+        self.offline = False
         os.makedirs(cache_dir, exist_ok=True)
 
     def close(self) -> None:
@@ -105,7 +108,7 @@ class TileCache:
                     pass
                 img = None
         if img is None:
-            if not TILES_ENABLED:
+            if not TILES_ENABLED or self.offline:
                 return None
             img = self._download(url_tpl, path, z, x, y)
         if img is not None:
@@ -115,21 +118,53 @@ class TileCache:
                     self.mem.popitem(last=False)
         return img
 
+    def peek(self, key: str, z: int, x: int, y: int) -> Optional[Image.Image]:
+        """Tuile déjà disponible (mémoire ou disque), sans requête réseau."""
+        n = 1 << z
+        if z < 0 or not (0 <= y < n):
+            return None
+        x %= n
+        mem_key = f"{key}/{z}/{x}/{y}"
+        with self.lock:
+            img = self.mem.get(mem_key)
+        if img is not None:
+            return img
+        path = self._disk_path(key, z, x, y)
+        if os.path.exists(path):
+            try:
+                return Image.open(path).convert("RGB")
+            except OSError:
+                return None
+        return None
+
     def _download(self, url_tpl: str, path: str, z: int, x: int, y: int) -> Optional[Image.Image]:
         url = (url_tpl.replace("{z}", str(z)).replace("{x}", str(x)).replace("{y}", str(y))
                .replace("{s}", "abc"[(x + y) % 3]).replace("{r}", ""))
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT,
                                                    "Accept": "image/*"})
-        try:
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                data = resp.read(4 * 1024 * 1024)
-            img = Image.open(__import__("io").BytesIO(data)).convert("RGB")
-        except Exception as exc:  # réseau, HTTP, image illisible
+        img = None
+        exc: Optional[BaseException] = None
+        for essai in range(2):   # les serveurs de tuiles limitent le débit : on réessaie
+            try:
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    data = resp.read(4 * 1024 * 1024)
+                img = Image.open(__import__("io").BytesIO(data)).convert("RGB")
+                break
+            except Exception as err:  # réseau, HTTP, image illisible
+                exc = err
+                if essai == 0:
+                    time.sleep(0.4)
+        if img is None:
             self.failures += 1
+            self.consecutive_failures += 1
             if self.failures <= 3:
                 log.warning("Tuile %s indisponible : %s", url, exc)
+            if self.consecutive_failures >= 24 and not self.offline:
+                self.offline = True   # inutile de rappeler le réseau à chaque image
+                log.warning("Serveur de tuiles injoignable : passage hors ligne.")
             return None
         self.downloads += 1
+        self.consecutive_failures = 0
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             img.save(path, "PNG")
@@ -140,6 +175,25 @@ class TileCache:
     def prefetch(self, url_tpl: str, key: str, coords) -> None:
         for z, x, y in coords:
             self.pool.submit(self.get, url_tpl, key, z, x, y)
+
+
+def _parent_tile(cache: "TileCache", url_tpl: str, key: str, z: int, x: int, y: int,
+                 depth: int = 3) -> Optional[Image.Image]:
+    """Quart de la tuile de niveau supérieur, déjà en cache : bouche les trous
+    quand une tuile manque (serveur qui limite le débit) sans nouvel appel réseau."""
+    for up in range(1, depth + 1):
+        pz, px, py = z - up, x >> up, y >> up
+        if pz < 0:
+            return None
+        cached = cache.peek(key, pz, px, py)
+        if cached is None:
+            continue
+        f = 1 << up
+        size = TILE_SIZE // f
+        ox, oy = (x % f) * size, (y % f) * size
+        return cached.crop((ox, oy, ox + size, oy + size)).resize(
+            (TILE_SIZE, TILE_SIZE), Image.BILINEAR)
+    return None
 
 
 def choose_zoom(scale: float) -> int:
@@ -172,16 +226,23 @@ def render_tile_background(cache: TileCache, url_tpl: str, key: str,
     coords = [(z, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
     cache.prefetch(url_tpl, key, coords)
     target = max(1, int(round(tile_px)))
+    drawn = 0
     for z_, x, y in coords:
         img = cache.get(url_tpl, key, z_, x, y)
         if img is None:
-            continue
+            img = _parent_tile(cache, url_tpl, key, z_, x, y)
+            if img is None:
+                continue
+        else:
+            drawn += 1
         if img.size != (target, target):
             img = img.resize((target, target), Image.BILINEAR)
         px = int(round((x / n - left) * scale))
         py = int(round((y / n - top) * scale))
         canvas.paste(img, (px, py))
 
+    if coords and drawn == 0:
+        raise TileError("aucune tuile n'a pu être récupérée")
     if grayscale:
         canvas = canvas.convert("L").convert("RGB")
     if opacity < 1.0:

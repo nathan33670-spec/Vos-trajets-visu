@@ -110,7 +110,7 @@ class RenderOptions(BaseModel):
     width: int = Field(1920, ge=160, le=3840)
     height: int = Field(1080, ge=160, le=2160)
     fps: int = Field(30, ge=5, le=60)
-    duration: float = Field(60.0, ge=2, le=1800, description="Durée de la vidéo (s)")
+    duration: float = Field(30.0, ge=2, le=1800, description="Durée de la vidéo (s)")
     container: str = Field("mp4", pattern="^(mp4|webm|gif)$")
     quality: str = Field("high", pattern="^(low|medium|high|max)$")
     supersample: int = Field(2, ge=1, le=3, description="Anticrénelage (1 = off)")
@@ -122,14 +122,14 @@ class RenderOptions(BaseModel):
     hold_last_seconds: float = Field(1.5, ge=0)
 
     # --- Caméra --------------------------------------------------------------
-    camera: str = Field("fit_all", pattern="^(fit_all|follow|trip|auto)$")
+    camera: str = Field("auto", pattern="^(fit_all|follow|trip|auto)$")
     follow_zoom: float = Field(11.0, ge=1, le=19)
     camera_smoothing: float = Field(0.85, ge=0, le=0.99)
     padding: float = Field(0.08, ge=0, le=0.4)
     zoom_out_end: bool = Field(True, description="Dézoome sur l'ensemble à la fin")
 
     # --- Fond de carte -------------------------------------------------------
-    map_style: str = Field("ghost", pattern="^(none|ghost|grid|tiles)$")
+    map_style: str = Field("tiles", pattern="^(none|ghost|grid|tiles)$")
     background: str = "#0b0f1a"
     tile_provider: str = "carto_dark"
     tile_url: Optional[str] = None
@@ -141,14 +141,14 @@ class RenderOptions(BaseModel):
     color_mode: str = Field("mode", pattern="^(mode|speed|time|single)$")
     line_color: str = "#37e6c8"
     palette: str = Field("neon", pattern="^(neon|viridis|inferno|ice|fire|rainbow)$")
-    line_width: float = Field(2.6, ge=0.4, le=20)
+    line_width: float = Field(2.8, ge=0.4, le=20)
     trail_mode: str = Field("cumulative", pattern="^(cumulative|fade|comet)$")
-    trail_opacity: float = Field(0.55, ge=0.02, le=1, description="Opacité de la trace déjà parcourue")
+    trail_opacity: float = Field(0.5, ge=0.02, le=1, description="Opacité de la trace déjà parcourue")
     fade_seconds: float = Field(4.0, ge=0.2, le=120, description="Longueur de la traîne (s de vidéo)")
     glow: bool = True
-    glow_strength: float = Field(0.8, ge=0, le=2)
+    glow_strength: float = Field(0.9, ge=0, le=2)
     head_dot: bool = True
-    head_size: float = Field(6.0, ge=0, le=40)
+    head_size: float = Field(5.5, ge=0, le=40)
     head_pulse: bool = True
     show_places: bool = Field(False, description="Points sur les lieux visités")
 
@@ -239,55 +239,39 @@ TILE_PROVIDERS = {
 }
 
 PRESETS = {
-    "cinematique": {
-        "label": "Cinématique",
-        "description": "Caméra qui suit le trajet, traîne lumineuse, 1080p 30 ips.",
+    "defaut": {
+        "label": "Équilibré",
+        "description": "Caméra qui suit les trajets, fond de carte, 30 s. Le réglage conseillé.",
         "options": {
-            "camera": "auto", "trail_mode": "comet", "glow": True, "glow_strength": 1.0,
-            "time_mode": "compress", "duration": 90, "map_style": "ghost",
-            "color_mode": "mode", "head_pulse": True, "zoom_out_end": True,
+            "camera": "auto", "trail_mode": "cumulative", "map_style": "tiles",
+            "tile_provider": "carto_dark", "duration": 30, "color_mode": "mode",
+            "glow": True, "zoom_out_end": True, "time_mode": "compress",
         },
     },
-    "vue_globale": {
-        "label": "Vue globale",
-        "description": "Plan fixe sur l'ensemble des trajets, trace cumulative.",
+    "carte_claire": {
+        "label": "Carte claire",
+        "description": "Fond de carte clair, tracé coloré — idéal pour l'impression ou un partage.",
         "options": {
-            "camera": "fit_all", "trail_mode": "cumulative", "time_mode": "compress",
-            "duration": 45, "map_style": "ghost", "trail_opacity": 0.5, "glow": True,
+            "camera": "auto", "map_style": "tiles", "tile_provider": "carto_light",
+            "background": "#f2f2f2", "overlay_color": "#1b2430", "glow": False,
+            "trail_opacity": 0.6, "line_width": 3.0, "duration": 30,
         },
     },
-    "carte_osm": {
-        "label": "Fond de carte OSM",
-        "description": "Tuiles Carto Dark en fond (nécessite un accès Internet).",
+    "vue_ensemble": {
+        "label": "Vue d'ensemble",
+        "description": "Plan fixe sur toute la zone, la trace se dessine peu à peu.",
         "options": {
-            "camera": "fit_all", "map_style": "tiles", "tile_provider": "carto_dark",
-            "trail_mode": "cumulative", "line_width": 3.0, "duration": 60,
+            "camera": "fit_all", "trail_mode": "cumulative", "map_style": "tiles",
+            "duration": 25, "trail_opacity": 0.65, "zoom_out_end": False,
         },
     },
-    "minimal": {
-        "label": "Minimaliste",
-        "description": "Trait unique, pas d'habillage, fond noir.",
+    "portrait": {
+        "label": "Portrait (réseaux)",
+        "description": "1080×1920, 20 s, texte agrandi — pour Instagram ou TikTok.",
         "options": {
-            "map_style": "none", "color_mode": "single", "glow": False,
-            "show_stats": False, "show_legend": False, "show_progress": False,
-            "show_scalebar": False, "head_dot": False, "trail_mode": "cumulative",
-            "trail_opacity": 0.9, "background": "#000000", "line_color": "#ffffff",
-        },
-    },
-    "reseau_social": {
-        "label": "Réseau social (vertical)",
-        "description": "Format 1080x1920, 30 s, rythme rapide.",
-        "options": {
-            "width": 1080, "height": 1920, "duration": 30, "camera": "fit_all",
-            "trail_mode": "comet", "font_scale": 1.3, "show_legend": False,
-        },
-    },
-    "rapide": {
-        "label": "Aperçu rapide",
-        "description": "480p, 15 ips, 15 s — pour tester ses réglages.",
-        "options": {
-            "width": 854, "height": 480, "fps": 15, "duration": 15,
-            "supersample": 1, "quality": "medium", "glow": False,
+            "width": 1080, "height": 1920, "duration": 20, "camera": "auto",
+            "font_scale": 1.15, "show_legend": False, "show_scalebar": False,
+            "map_style": "tiles",
         },
     },
 }

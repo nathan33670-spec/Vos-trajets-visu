@@ -25,7 +25,7 @@ from .models import Place, Trip
 
 log = logging.getLogger(__name__)
 
-MAX_MEMBER_BYTES = 600 * 1024 * 1024
+MAX_MEMBER_BYTES = 400 * 1024 * 1024
 
 ACTIVITY_MAP = {
     "WALKING": "walk", "ON_FOOT": "walk", "RUNNING": "walk", "HIKING": "walk",
@@ -558,24 +558,47 @@ def parse_bytes(raw: bytes, name: str, c: Collector) -> None:
     c.warnings.append(f"{name} : format non pris en charge (ignoré).")
 
 
+def _zip_members(zf: zipfile.ZipFile, c: Collector, archive: str) -> List[zipfile.ZipInfo]:
+    members = []
+    for m in zf.infolist():
+        if m.is_dir() or not m.filename.lower().endswith((".json", ".geojson", ".gpx", ".json.gz")):
+            continue
+        if m.file_size > MAX_MEMBER_BYTES:
+            c.warnings.append(
+                f"{os.path.basename(m.filename)} ignoré : {m.file_size // (1024 * 1024)} Mo, "
+                f"au-delà de la limite de {MAX_MEMBER_BYTES // (1024 * 1024)} Mo.")
+            continue
+        members.append(m)
+    if not members:
+        c.warnings.append(f"{archive} : aucun JSON de localisation exploitable dans l'archive.")
+    return members
+
+
 def parse_zip(path: str, c: Collector) -> None:
+    """Lit une archive Takeout en commençant par la Timeline détaillée.
+
+    Les points bruts (Records.json, souvent plusieurs centaines de Mo) ne sont
+    ouverts que si rien d'autre n'a donné de trajets : cela évite de charger
+    inutilement un énorme fichier — première cause d'échec d'analyse.
+    """
+    archive = os.path.basename(path)
     with zipfile.ZipFile(path) as zf:
-        members = [m for m in zf.infolist()
-                   if not m.is_dir() and m.file_size <= MAX_MEMBER_BYTES
-                   and m.filename.lower().endswith((".json", ".geojson", ".gpx", ".json.gz"))]
-        # Priorité aux dossiers Timeline/Semantic ; on ignore les autres services Takeout.
-        interesting = [m for m in members if re.search(
-            r"(timeline|location|trajet|position|semantic|records|historique)",
-            m.filename, re.I)]
-        chosen = interesting or members
-        if not chosen:
-            c.warnings.append(f"{os.path.basename(path)} : aucun JSON de localisation dans l'archive.")
-        for m in sorted(chosen, key=lambda x: x.filename):
-            try:
-                with zf.open(m) as fh:
-                    parse_bytes(fh.read(), m.filename, c)
-            except (zipfile.BadZipFile, RuntimeError, MemoryError) as exc:
-                c.warnings.append(f"{m.filename} : lecture impossible ({exc}).")
+        members = _zip_members(zf, c, archive)
+        raw = [m for m in members
+               if re.search(r"(records|enregistrement|raw)", m.filename, re.I)]
+        detailed = [m for m in members if m not in raw]
+        interesting = [m for m in detailed if re.search(
+            r"(timeline|location|trajet|position|semantic|historique)", m.filename, re.I)]
+
+        for group in (interesting or detailed, raw):
+            for m in sorted(group, key=lambda x: x.filename):
+                try:
+                    with zf.open(m) as fh:
+                        parse_bytes(fh.read(), m.filename, c)
+                except (zipfile.BadZipFile, RuntimeError, MemoryError, OSError) as exc:
+                    c.warnings.append(f"{os.path.basename(m.filename)} : lecture impossible ({exc}).")
+            if c.trips:      # la Timeline détaillée suffit : on n'ouvre pas les points bruts
+                break
 
 
 FORMAT_PRIORITY = {

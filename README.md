@@ -6,8 +6,10 @@ de tous vos déplacements : la trace se dessine dans le temps, la caméra suit l
 parcours, la date et les kilomètres défilent.
 
 Le portail web fait tout : dépôt du fichier, analyse, réglages, rendu, téléchargement.
-Aucune donnée ne sort de votre serveur (sauf, si vous l'activez, les requêtes de
-tuiles vers le fournisseur de fond de carte choisi).
+Six réglages suffisent ; tout le reste est replié dans les options avancées.
+Aucune donnée ne sort de votre serveur, à l'exception des requêtes de tuiles vers
+le fournisseur de fond de carte choisi (`TILES_ENABLED=0` pour un fonctionnement
+totalement hors ligne : la trace est alors dessinée en filigrane à la place).
 
 ---
 
@@ -67,65 +69,45 @@ latitude/longitude daté.
 
 ---
 
-## Les options du portail
+## Le portail en trois écrans
 
-### Sélection des trajets
-Dates de début / fin · modes de transport (voiture, transports en commun, vélo,
-marche, avion, bateau) · distance et durée minimales / maximales · rectangle
-géographique · suppression des points GPS aberrants ·
-**confidentialité** : masquer tous les points dans un rayon donné autour d'un
-lieu (domicile) avant de publier la vidéo.
+**1. Récupérer votre fichier Google** — un guide numéroté, en deux versions
+(ordinateur / téléphone), explique pas à pas comment obtenir l'export ; il n'y a
+plus qu'à déposer l'archive sans la décompresser.
 
-### Format vidéo
-Résolutions prédéfinies (720p → 4K, vertical 1080×1920, carré) ou libre ·
-5 à 60 ips · 5 s à 10 min · **MP4 (H.264)**, **WebM (VP9)** ou **GIF** ·
-4 niveaux de qualité · anticrénelage ×1/×2/×3.
+**2. Votre vidéo** — six réglages seulement sont visibles : format, durée,
+mouvement de caméra, fond de carte, couleur des trajets, titre. Quatre
+présélections (*Équilibré*, *Carte claire*, *Vue d'ensemble*, *Portrait*) et un
+bouton **Aperçu rapide (15 s)** permettent de juger avant le rendu final.
 
-### Rythme temporel
-- **Réel avec pauses compressées** (défaut) — le temps réel défile mais les arrêts
-  au-delà d'un seuil sont raccourcis.
-- **Strictement proportionnel** — une seconde de vidéo = une durée réelle constante.
-- **Chaque trajet dure autant** — utile quand les trajets sont très inégaux.
-- **Vitesse constante** — l'avancement suit la distance, pas l'horloge.
+**3. Vos vidéos** — avancement en direct, annulation, lecture dans la page,
+téléchargement de la vidéo et de l'affiche.
 
-Plus : pause au début, pause à la fin.
+### Options avancées (repliées par défaut)
 
-### Caméra
-Plan fixe sur l'ensemble · **cinématique** (cadre la portion en cours, zoom et
-translation lissés, recentrage automatique du point mobile) · centrée sur le point
-courant · un cadrage par trajet. Zoom maximal, lissage, marge, dézoom final sur
-l'ensemble.
+| Rubrique | Réglages |
+|---|---|
+| Sélection | dates, modes de transport, distance et durée min/max, zone géographique, points aberrants, **masquage d'un rayon autour du domicile** |
+| Format | largeur/hauteur libres, images par seconde, MP4 / WebM / GIF, qualité, anticrénelage |
+| Rythme | temps réel, pauses compressées, trajets de durée égale, vitesse constante ; pauses de début et de fin |
+| Caméra | zoom maximal, lissage, marge, dézoom final |
+| Fond de carte | fournisseur de tuiles (Carto, OSM, OpenTopoMap, Esri, URL libre), opacité, noir et blanc, couleur de fond |
+| Tracé | traîne cumulative / comète / éphémère, palettes, épaisseur, halo, point mobile, lieux visités |
+| Habillage | sous-titre, texte de fin, filigrane, date, compteurs, légende, échelle, unités, couleurs, taille du texte |
+| Sorties | musique de fond, boomerang, affiche JPEG, exports GeoJSON et GPX |
 
-### Fond de carte
-- **Trace fantôme** (défaut) — le parcours complet en filigrane : aucun accès réseau.
-- **Uni** ou **grille**.
-- **Tuiles** : Carto Dark / Positron / Voyager, OpenStreetMap, OpenTopoMap,
-  Esri World Imagery, ou une **URL `{z}/{x}/{y}` personnalisée**, avec opacité,
-  passage en noir et blanc, cache disque et attribution incrustée.
+### Comment la caméra choisit son cadre
 
-### Style du tracé
-Couleur selon le **mode de transport**, la **vitesse**, la **date** ou couleur unique ·
-palettes néon / viridis / inferno / glace / feu / arc-en-ciel · épaisseur ·
-traîne **cumulative / comète / éphémère** · opacité de l'historique · longueur de la
-traîne · halo lumineux · point mobile pulsant · lieux visités.
+C'est le cœur du rendu, et le réglage par défaut :
 
-### Habillage
-Carton de titre + sous-titre · texte de fin · filigrane · date (4 formats) ·
-compteur de distance et de trajets · barre de progression · légende (ou échelle de
-couleurs) · échelle cartographique · unités km/miles · couleur et taille du texte ·
-fondu d'ouverture.
-
-### Audio et sorties
-Musique de fond (MP3/M4A/WAV/OGG/FLAC, bouclée et fondue en sortie) ·
-**boomerang** (lecture aller-retour) · affiche JPEG · exports **GeoJSON** et **GPX**
-des trajets filtrés.
-
-### Présélections
-*Cinématique*, *Vue globale*, *Fond de carte OSM*, *Minimaliste*,
-*Réseau social (vertical)*, *Aperçu rapide*. Le bouton **Aperçu rapide (480p)**
-génère un test en quelques secondes avant le rendu final.
-
----
+- pendant la vidéo, la caméra **suit les trajets en cours** et reste assez
+  proche pour qu'on lise les villes traversées ;
+- à la fin, elle **dézoome d'un coup sur l'ensemble** ;
+- ce plan large est cadré sur les **destinations habituelles** : un unique
+  voyage à l'autre bout du monde est montré au moment où il a lieu, mais ne
+  vient pas recentrer toute la vidéo sur un océan vide. Un trajet n'est écarté
+  du plan large que s'il est au moins quatre fois plus éloigné que tous les
+  autres — dix voyages aux États-Unis restent donc dans le cadre.
 
 ## Performances
 
@@ -134,27 +116,23 @@ Mesuré sur **un cœur** x86, avec un historique volumineux de **2 500 trajets /
 
 | Rendu | Vitesse | Durée du rendu |
 |---|---|---|
-| 480p, 15 ips, sans anticrénelage ni halo (*Aperçu rapide*) | 51 img/s | **4 s** |
-| 720p 30 ips, plan fixe, anticrénelage ×2 | 27 img/s | **34 s** |
-| 1080p 30 ips, plan fixe, anticrénelage ×2 | 14 img/s | **1 min 03** |
-| 1080p 30 ips, caméra cinématique + traîne comète | 3,3 img/s | **4 min 37** |
+| 480p, 15 ips (*Aperçu rapide*) | 51 img/s | **4 s** |
+| 720p 30 ips, plan fixe | 27 img/s | **34 s** |
+| 1080p 30 ips, plan fixe | 14 img/s | **1 min 03** |
+| 1080p 30 ips, caméra qui suit les trajets | 3,3 img/s | **4 min 37** |
 
-L'analyse d'un export de 11 Mo (49 000 points) prend ~5 s.
+L'analyse d'un export de 11 Mo (49 000 points) prend ~5 s. Une archive Takeout
+complète est lue en ne dépliant que la Timeline détaillée : `Records.json`,
+souvent plusieurs centaines de mégaoctets, n'est ouvert que si rien d'autre n'a
+donné de trajets.
 
-Pour accélérer un rendu : réduire la **longueur de la traîne** (le mode comète
-redessine toute la traîne à chaque image), passer l'**anticrénelage** à ×1,
-désactiver le **halo**, ou préférer le **plan fixe** — qui n'ajoute que les
-nouveaux segments à chaque image et reste rapide quelle que soit la taille de
-l'historique.
+Pour accélérer un rendu : **Aperçu rapide** pour régler, puis anticrénelage ×1,
+halo désactivé, ou caméra en plan fixe — qui n'ajoute que les nouveaux segments
+à chaque image et reste rapide quelle que soit la taille de l'historique.
 
 Le rendu tourne en tâche de fond : la page affiche l'avancement et le temps
 restant estimé, et le rendu peut être annulé à tout moment.
 `MAX_CONCURRENT_JOBS` limite le nombre de rendus simultanés.
-
-Deux optimisations rendent les gros historiques utilisables : simplification
-Ramer–Douglas–Peucker des traces au niveau de détail réellement visible, et
-couche cumulative incrémentale en caméra fixe (chaque segment n'est dessiné
-qu'une seule fois pour toute la vidéo).
 
 ## Configuration (variables d'environnement)
 
