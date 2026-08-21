@@ -42,6 +42,7 @@ header.top {
 .health .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
                background: var(--ok); margin-right: .35rem; }
 .health .dot.bad { background: var(--error); }
+.health .tight { color: var(--warn); }
 
 main { max-width: 1120px; margin: 0 auto; padding: 1.6rem clamp(1rem, 4vw, 2.4rem) 4rem; }
 .card {

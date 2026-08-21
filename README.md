@@ -121,10 +121,28 @@ Mesuré sur **un cœur** x86, avec un historique volumineux de **2 500 trajets /
 | 1080p 30 ips, plan fixe | 14 img/s | **1 min 03** |
 | 1080p 30 ips, caméra qui suit les trajets | 3,3 img/s | **4 min 37** |
 
-L'analyse d'un export de 11 Mo (49 000 points) prend ~5 s. Une archive Takeout
-complète est lue en ne dépliant que la Timeline détaillée : `Records.json`,
-souvent plusieurs centaines de mégaoctets, n'est ouvert que si rien d'autre n'a
-donné de trajets.
+### Mémoire — le point critique sur un NAS
+
+Les gros fichiers sont lus **élément par élément** : charger l'arbre JSON complet
+coûte environ sept fois la taille du fichier en mémoire, de quoi faire tuer le
+conteneur (et le navigateur affiche alors « connexion interrompue »).
+Mesures sur un export `Records.json` de **323 Mo / 1,2 million de points** :
+
+| Étape | Avant | Après |
+|---|---|---|
+| Analyse du fichier | 2 184 Mo | **518 Mo** |
+| Pic pendant le rendu | 1 011 Mo | **297 Mo** |
+| Rendu 480p de 8 s | 465 s | **48 s** |
+
+Trois mécanismes y contribuent : lecture au fil de l'eau, points stockés en
+tableaux compacts (8 octets par valeur au lieu d'une trentaine), et
+simplification plafonnée à 120 000 segments — au-delà, le détail n'est plus
+visible à l'image mais coûte à chaque image.
+
+Une archive Takeout n'est de plus dépliée que pour la Timeline détaillée :
+`Records.json` n'est ouvert que si rien d'autre n'a donné de trajets.
+**Un NAS avec 1 Go de RAM disponible suffit** ; la page d'accueil affiche la
+mémoire et l'espace disque vus par le conteneur.
 
 Pour accélérer un rendu : **Aperçu rapide** pour régler, puis anticrénelage ×1,
 halo désactivé, ou caméra en plan fixe — qui n'ajoute que les nouveaux segments

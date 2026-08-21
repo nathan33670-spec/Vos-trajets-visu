@@ -632,9 +632,13 @@ async function init() {
 
   try {
     const h = await api('/api/sante');
+    const go = o => o ? (o / 1073741824).toFixed(1) + ' Go' : '?';
+    const tight = h.memoire_libre_octets && h.memoire_libre_octets < 1073741824;
     $('#health').innerHTML =
       `<span class="dot ${h.ffmpeg ? '' : 'bad'}"></span>${h.ffmpeg ? 'Service prêt' : 'ffmpeg manquant'}` +
-      `<br>${h.tuiles_activees ? 'Tuiles autorisées' : 'Mode hors ligne'}`;
+      `<br>${h.tuiles_activees ? 'Tuiles autorisées' : 'Mode hors ligne'}` +
+      `<br><span class="${tight ? 'tight' : ''}">${go(h.memoire_libre_octets)} RAM · ` +
+      `${go(h.disque_libre_octets)} disque</span>`;
   } catch { $('#health').textContent = ''; }
 
   try {

@@ -11,6 +11,7 @@ de couples latitude/longitude datés.
 """
 from __future__ import annotations
 
+import codecs
 import gzip
 import json
 import logging
@@ -21,11 +22,16 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .geo import haversine_m
-from .models import Place, Trip
+from .models import Place, Trip, coords
 
 log = logging.getLogger(__name__)
 
-MAX_MEMBER_BYTES = 400 * 1024 * 1024
+MAX_MEMBER_BYTES = 2 * 1024 * 1024 * 1024
+# Au-delà de cette taille, le fichier est lu élément par élément : charger
+# l'arbre JSON complet coûte environ sept fois la taille du fichier en mémoire,
+# ce qui suffit à faire tuer le conteneur sur un NAS.
+STREAM_THRESHOLD = 24 * 1024 * 1024
+STREAM_KEYS = ("locations", "timelineObjects", "semanticSegments", "rawSignals")
 
 ACTIVITY_MAP = {
     "WALKING": "walk", "ON_FOOT": "walk", "RUNNING": "walk", "HIKING": "walk",
@@ -189,9 +195,9 @@ class Collector:
         if len(dedup) < 2:
             return
         trip = Trip(mode=mode or "other",
-                    times=[p[0] for p in dedup],
-                    lats=[p[1] for p in dedup],
-                    lons=[p[2] for p in dedup],
+                    times=coords([p[0] for p in dedup]),
+                    lats=coords([p[1] for p in dedup]),
+                    lons=coords([p[2] for p in dedup]),
                     source=source, label=label, fmt=fmt)
         self.trips.append(trip)
 
@@ -490,6 +496,102 @@ def _deep_scan(obj: Any, c: Collector, source: str, budget: int = 400000) -> int
     return len(found)
 
 
+# ------------------------------------------------------- lecture au fil de l'eau
+
+def _decoded_chunks(prefix: str, fh, chunk_size: int = 1 << 20) -> Iterable[str]:
+    """Texte du flux, en morceaux, sans jamais tout garder en mémoire."""
+    if prefix:
+        yield prefix
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    while True:
+        raw = fh.read(chunk_size)
+        if not raw:
+            break
+        text = decoder.decode(raw)
+        if text:
+            yield text
+    tail = decoder.decode(b"", True)
+    if tail:
+        yield tail
+
+
+def _stream_objects(chunks: Iterable[str], limit: int = 4_000_000) -> Iterable[dict]:
+    """Génère les objets JSON de premier niveau d'un tableau, un par un."""
+    depth = 0
+    in_string = False
+    escaped = False
+    started = False
+    parts: List[str] = []
+    produced = 0
+    for chunk in chunks:
+        piece_start = 0
+        for i, ch in enumerate(chunk):
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                if depth == 0:
+                    piece_start = i
+                    started = True
+                    parts = []
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth <= 0 and started:
+                    depth = 0
+                    parts.append(chunk[piece_start:i + 1])
+                    started = False
+                    try:
+                        yield json.loads("".join(parts))
+                    except json.JSONDecodeError:
+                        pass
+                    parts = []
+                    produced += 1
+                    if produced >= limit:
+                        return
+            elif ch == "]" and depth == 0:
+                return
+        if started:
+            parts.append(chunk[piece_start:])
+
+
+def _parse_streaming(fh, name: str, c: Collector) -> bool:
+    """Analyse un gros JSON sans le charger entièrement. False si non reconnu."""
+    head = fh.read(1 << 20)
+    text = head.decode("utf-8-sig", errors="replace")
+    best = None
+    for key in STREAM_KEYS:
+        pos = text.find(f'"{key}"')
+        if pos >= 0 and (best is None or pos < best[1]):
+            best = (key, pos)
+    if best is None:
+        fh.seek(0) if fh.seekable() else None
+        return False
+    key, pos = best
+    bracket = text.find("[", pos)
+    if bracket < 0:
+        return False
+    chunks = _decoded_chunks(text[bracket + 1:], fh)
+    objects = _stream_objects(chunks)
+    if key == "locations":
+        _parse_records(objects, c, name)
+    elif key == "timelineObjects":
+        _parse_timeline_objects(objects, c, name)
+    elif key == "semanticSegments":
+        _parse_semantic_segments(objects, c, name)
+    else:  # rawSignals
+        _parse_records((o.get("position") or {} for o in objects), c, name)
+    log.info("%s : lu au fil de l'eau (clé %s)", name, key)
+    return True
+
+
 # --------------------------------------------------------------- entrée
 
 def _dispatch_json(data: Any, c: Collector, source: str) -> None:
@@ -574,6 +676,32 @@ def _zip_members(zf: zipfile.ZipFile, c: Collector, archive: str) -> List[zipfil
     return members
 
 
+def parse_stream(fh, name: str, c: Collector, size: int) -> None:
+    """Lit un fichier depuis un flux, au fil de l'eau s'il est volumineux."""
+    lower = name.lower()
+    if lower.endswith(".gz"):
+        try:
+            fh = gzip.GzipFile(fileobj=fh)
+            lower = lower[:-3]
+            size *= 4          # estimation grossière de la taille décompressée
+        except OSError:
+            c.warnings.append(f"{name} : archive gzip illisible.")
+            return
+    if size > STREAM_THRESHOLD and lower.endswith((".json", ".geojson")):
+        try:
+            if _parse_streaming(fh, name, c):
+                return
+        except (OSError, ValueError) as exc:
+            c.warnings.append(f"{name} : lecture au fil de l'eau impossible ({exc}).")
+        if fh.seekable():
+            fh.seek(0)
+        else:
+            c.warnings.append(f"{name} : format non reconnu et fichier trop gros "
+                              "pour être relu entièrement.")
+            return
+    parse_bytes(fh.read(), name, c)
+
+
 def parse_zip(path: str, c: Collector) -> None:
     """Lit une archive Takeout en commençant par la Timeline détaillée.
 
@@ -594,7 +722,7 @@ def parse_zip(path: str, c: Collector) -> None:
             for m in sorted(group, key=lambda x: x.filename):
                 try:
                     with zf.open(m) as fh:
-                        parse_bytes(fh.read(), m.filename, c)
+                        parse_stream(fh, m.filename, c, m.file_size)
                 except (zipfile.BadZipFile, RuntimeError, MemoryError, OSError) as exc:
                     c.warnings.append(f"{os.path.basename(m.filename)} : lecture impossible ({exc}).")
             if c.trips:      # la Timeline détaillée suffit : on n'ouvre pas les points bruts
@@ -631,7 +759,7 @@ def parse_files(paths: List[str]) -> Collector:
                 parse_zip(path, c)
             else:
                 with open(path, "rb") as fh:
-                    parse_bytes(fh.read(), name, c)
+                    parse_stream(fh, name, c, os.path.getsize(path))
         except OSError as exc:
             c.warnings.append(f"{name} : {exc}")
     c.trips = _dedupe_sources(c)

@@ -8,7 +8,7 @@ import shutil
 import time
 from typing import List, Optional
 
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -90,13 +90,43 @@ def health():
         ffmpeg = ffmpeg_binary()
     except RuntimeError:
         ffmpeg = None
+    usage = shutil.disk_usage(UPLOAD_DIR)
     return {
         "statut": "ok" if ffmpeg else "degrade",
         "ffmpeg": ffmpeg,
         "tuiles_activees": TILES_ENABLED,
         "rendus_en_cours": sum(1 for j in manager.jobs.values() if j.status == "running"),
         "stockage_octets": dir_size(UPLOAD_DIR) + dir_size(JOB_DIR),
+        "disque_libre_octets": usage.free,
+        "memoire_libre_octets": _free_memory(),
+        "limite_envoi_mo": MAX_UPLOAD_MB,
     }
+
+
+def _free_memory() -> Optional[int]:
+    """Mémoire disponible vue du conteneur (utile pour diagnostiquer un NAS)."""
+    for path, factor in (("/sys/fs/cgroup/memory.max", 1), ):
+        try:
+            with open(path) as fh:
+                value = fh.read().strip()
+            if value.isdigit():
+                used = 0
+                try:
+                    with open("/sys/fs/cgroup/memory.current") as fh2:
+                        used = int(fh2.read().strip())
+                except OSError:
+                    pass
+                return max(int(value) * factor - used, 0)
+        except OSError:
+            continue
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return None
 
 
 @app.get("/api/config")
@@ -117,7 +147,20 @@ def config():
 
 
 @app.post("/api/uploads")
-async def upload(fichiers: List[UploadFile] = File(..., alias="fichiers")):
+async def upload(request: Request,
+                 fichiers: List[UploadFile] = File(..., alias="fichiers")):
+    # Refuser d'emblée : couper la connexion en cours de lecture se présente au
+    # navigateur comme une panne réseau, pas comme un message d'erreur.
+    announced = int(request.headers.get("content-length") or 0)
+    if announced > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, f"Fichier de {announced // (1024 * 1024)} Mo : la limite "
+                                 f"est de {MAX_UPLOAD_MB:.0f} Mo. Augmentez MAX_UPLOAD_MB "
+                                 f"dans le fichier .env du serveur.")
+    free = shutil.disk_usage(UPLOAD_DIR).free
+    if announced and free < announced * 3:
+        raise HTTPException(507, f"Espace disque insuffisant sur le serveur : "
+                                 f"{free // (1024 * 1024)} Mo libres pour un fichier de "
+                                 f"{announced // (1024 * 1024)} Mo.")
     if len(fichiers) > MAX_FILES:
         raise HTTPException(400, f"{MAX_FILES} fichiers au maximum.")
     upload_id = new_id("up")
@@ -168,6 +211,12 @@ async def upload(fichiers: List[UploadFile] = File(..., alias="fichiers")):
     except HTTPException:
         shutil.rmtree(dest, ignore_errors=True)
         raise
+    except MemoryError as exc:
+        shutil.rmtree(dest, ignore_errors=True)
+        log.exception("Mémoire insuffisante pendant l'analyse")
+        raise HTTPException(507, "Mémoire insuffisante pour analyser ce fichier. "
+                                 "Allouez plus de RAM au conteneur, ou n'envoyez que le "
+                                 "dossier « Semantic Location History » de l'archive.") from exc
     except Exception as exc:  # noqa: BLE001
         shutil.rmtree(dest, ignore_errors=True)
         log.exception("Échec de l'analyse")

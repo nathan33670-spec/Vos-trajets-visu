@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import bisect
+from array import array
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from .geo import haversine_m, lonlat_to_world, rdp
-from .models import MODE_MAX_SPEED, Place, RenderOptions, Trip
+from .models import MODE_MAX_SPEED, Place, RenderOptions, Trip, coords
 
 CHUNK = 512
+# Au-delà, le détail n'est plus visible mais chaque image coûte : un historique
+# très dense (marche, GPS bavard) doit rester simplifiable sans exploser.
+MAX_SEGMENTS = 120_000
 
 
 # ------------------------------------------------------------------ filtres
@@ -23,7 +27,9 @@ def trip_distance_m(trip: Trip) -> float:
 
 def _clean_outliers(trip: Trip, max_kmh: float) -> Optional[Trip]:
     """Retire les points impliquant une vitesse impossible."""
-    keep_t, keep_a, keep_o = [trip.times[0]], [trip.lats[0]], [trip.lons[0]]
+    keep_t = array("d", (trip.times[0],))
+    keep_a = array("d", (trip.lats[0],))
+    keep_o = array("d", (trip.lons[0],))
     limit = max_kmh / 3.6
     for i in range(1, len(trip.times)):
         dt = trip.times[i] - keep_t[-1]
@@ -74,17 +80,17 @@ def filter_trips(trips: List[Trip], places: List[Place],
         if t_max is not None and trip.start > t_max:
             dropped["date"] += 1
             continue
-        cur = Trip(mode=trip.mode, times=list(trip.times), lats=list(trip.lats),
-                   lons=list(trip.lons), source=trip.source, label=trip.label)
+        cur = Trip(mode=trip.mode, times=trip.times, lats=trip.lats,
+                   lons=trip.lons, source=trip.source, label=trip.label, fmt=trip.fmt)
         if priv:
             keep = [i for i in range(len(cur.times))
                     if haversine_m(cur.lats[i], cur.lons[i], priv[0], priv[1]) > priv[2]]
             if len(keep) < 2:
                 dropped["vide"] += 1
                 continue
-            cur.times = [cur.times[i] for i in keep]
-            cur.lats = [cur.lats[i] for i in keep]
-            cur.lons = [cur.lons[i] for i in keep]
+            cur.times = coords([cur.times[i] for i in keep])
+            cur.lats = coords([cur.lats[i] for i in keep])
+            cur.lons = coords([cur.lons[i] for i in keep])
         if bbox:
             inside = any(bbox[0] <= lo <= bbox[2] and bbox[1] <= la <= bbox[3]
                          for la, lo in zip(cur.lats, cur.lons))
@@ -229,14 +235,13 @@ def build_timeline(trips: List[Trip], opt: RenderOptions,
     if opt.camera in ("follow", "auto", "trip"):
         eps *= 0.25  # on zoome : il faut garder plus de détail
 
+    simplified = _simplify_all(world_pts_all, eps)
+
     gap_cap = max(opt.gap_max_seconds, 1.0)
     prev_end: Optional[Tuple[float, float, float]] = None
     per_trip_steps: List[List[int]] = []
 
-    for ti, (trip, pts) in enumerate(zip(trips, world_pts_all)):
-        simple = rdp(pts, eps) if len(pts) > 3 else pts
-        if len(simple) < 2:
-            simple = pts
+    for ti, (trip, simple) in enumerate(zip(trips, simplified)):
         start_idx = len(tl.sx)
         if prev_end is not None:
             tl.sx.append(prev_end[0]); tl.sy.append(prev_end[1])
@@ -347,6 +352,27 @@ def wide_bounds(tl: Timeline, max_ratio: float = 3.5) -> Tuple[float, float, flo
     span_full = max(full[2] - full[0], full[3] - full[1], 1e-9)
     span_dense = max(dense[2] - dense[0], dense[3] - dense[1], 1e-9)
     return full if span_full / span_dense <= max_ratio else dense
+
+
+def _simplify_all(world_pts_all: List[List], eps: float,
+                  budget: int = MAX_SEGMENTS) -> List[List]:
+    """Simplifie chaque trajet, en durcissant le seuil si le total reste énorme."""
+    def run(tolerance: float) -> List[List]:
+        out = []
+        for pts in world_pts_all:
+            simple = rdp(pts, tolerance) if len(pts) > 3 else pts
+            out.append(simple if len(simple) >= 2 else pts)
+        return out
+
+    simplified = run(eps)
+    total = sum(max(len(p) - 1, 0) for p in simplified)
+    if total > budget and eps >= 0:
+        simplified = run(max(eps, 1e-9) * (total / budget) ** 0.9)
+        total = sum(max(len(p) - 1, 0) for p in simplified)
+    if total > budget:      # dernier recours : on garde un point sur k
+        step = int(total / budget) + 1
+        simplified = [p if len(p) <= 3 else (p[::step] + [p[-1]]) for p in simplified]
+    return simplified
 
 
 def _world_distance_m(a, b) -> float:

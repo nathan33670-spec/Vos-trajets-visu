@@ -1,8 +1,9 @@
 """Modèles de données et options de rendu."""
 from __future__ import annotations
 
+from array import array
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -42,16 +43,30 @@ MODE_MAX_SPEED = {
 
 # ---------------------------------------------------------------- structures
 
+def coords(values: Sequence[float]) -> array:
+    """Tableau de flottants compact : huit octets par valeur au lieu de trente.
+
+    Un historique de plusieurs années représente des millions de points ; en
+    listes Python, la mémoire suffit à faire tuer le conteneur sur un NAS.
+    """
+    return values if isinstance(values, array) else array("d", values)
+
+
 @dataclass
 class Trip:
     """Un trajet : une suite de points datés."""
     mode: str
-    times: List[float] = field(default_factory=list)   # epoch (s, UTC)
-    lats: List[float] = field(default_factory=list)
-    lons: List[float] = field(default_factory=list)
+    times: array = field(default_factory=lambda: array("d"))   # epoch (s, UTC)
+    lats: array = field(default_factory=lambda: array("d"))
+    lons: array = field(default_factory=lambda: array("d"))
     source: str = ""
     label: str = ""
     fmt: str = ""
+
+    def __post_init__(self) -> None:
+        self.times = coords(self.times)
+        self.lats = coords(self.lats)
+        self.lons = coords(self.lons)
 
     def __len__(self) -> int:
         return len(self.times)

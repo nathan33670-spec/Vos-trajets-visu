@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import Dict, List, Optional, Tuple
 
-from .models import Place, Trip
+from .models import Place, Trip, coords
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.getcwd(), "data"))
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
@@ -56,8 +56,9 @@ def save_trips(path: str, trips: List[Trip], places: List[Place]) -> None:
 def load_trips(path: str) -> Tuple[List[Trip], List[Place]]:
     with gzip.open(path, "rt", encoding="utf-8") as fh:
         payload = json.load(fh)
-    trips = [Trip(mode=t["m"], times=t["t"], lats=t["a"], lons=t["o"],
-                  source=t.get("s", "")) for t in payload.get("trips", [])]
+    trips = [Trip(mode=t["m"], times=coords(t["t"]), lats=coords(t["a"]),
+                  lons=coords(t["o"]), source=t.get("s", ""))
+             for t in payload.get("trips", [])]
     places = [Place(name=p.get("n", ""), lat=p["a"], lon=p["o"], start=p["s"], end=p["e"])
               for p in payload.get("places", [])]
     return trips, places
